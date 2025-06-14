@@ -30,12 +30,7 @@ const (
 var rsaPriv *rsa.PrivateKey
 var ecPriv *ecdsa.PrivateKey
 
-func getKeyType() KeyType {
-	keyFlag := flag.String("keytype", "", "Key type to use (ec or rsa)")
-	flag.Parse()
-	if *keyFlag == string(KeyTypeEC) || *keyFlag == string(KeyTypeRSA) {
-		return KeyType(*keyFlag)
-	}
+func getKeyTypeFromEnv() KeyType {
 	if val := os.Getenv("JWE_KEY_TYPE"); val == string(KeyTypeRSA) {
 		return KeyTypeRSA
 	}
@@ -228,9 +223,11 @@ func main() {
 	keyFlag := flag.String("keytype", "", "Key type to use (ec or rsa)")
 	flag.Parse()
 
-	keyType := KeyType(*keyFlag)
-	if keyType != KeyTypeEC && keyType != KeyTypeRSA {
-		keyType = getKeyType()
+	var keyType KeyType
+	if *keyFlag == string(KeyTypeEC) || *keyFlag == string(KeyTypeRSA) {
+		keyType = KeyType(*keyFlag)
+	} else {
+		keyType = getKeyTypeFromEnv()
 	}
 
 	if err := loadOrGenerateKeysWithType(keyType); err != nil {
