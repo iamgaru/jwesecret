@@ -1,4 +1,4 @@
-# 🔐 jwesecret – Encrypted Secret Store with JWE + JWT in Go
+# 🔐 jwesecret – Encrypted Secret Store with JWE + JWT
 
 **jwesecret** is a lightweight Go server and CLI for storing and retrieving secrets (e.g., WiFi passwords, API keys) using **asymmetric encryption** via [JWE (JSON Web Encryption)](https://datatracker.ietf.org/doc/html/rfc7516). Secrets can optionally be wrapped in a signed **JWT**, allowing for identity-carrying, tamper-proof payloads.
 
@@ -16,6 +16,82 @@
 - 🌐 HTTP server with `/encrypt` and `/decrypt` endpoints
 - 🛠 CLI interface with `--mode encrypt|decrypt`
 - 🐳 Docker support
+
+# 🔐 Encryption Process Diagrams (ASCII Overview)
+
+## JWE Encryption with Asymmetric Keys
+
+```
+[User Secret]
+     |
+     v
+[Encrypt with Public Key (RSA)]
+     |
+     v
+[AES-GCM Encrypted Payload (JWE)]
+     |
+     v
+[Store or Transmit Securely]
+     |
+     v
+[Recipient Decrypts with Private Key (RSA)]
+     |
+     v
+[Original Secret Recovered]
+```
+
+## JWT-Wrapped JWE (with Signing)
+
+```
+[User Secret]
+     |
+     v
+[Encrypt with RSA Public Key → JWE]
+     |
+     v
+[Wrap JWE into JWT Claim (e.g., "data")]
+     |
+     v
+[Sign JWT with RSA Private Key]
+     |
+     v
+[JWT Token Sent / Stored]
+     |
+     v
+[Recipient Verifies JWT Signature (Public Key)]
+     |
+     v
+[Extract "data" claim → Encrypted Payload]
+     |
+     v
+[Decrypt JWE using RSA Private Key]
+     |
+     v
+[Recover Original Secret]
+```
+
+## HTTP vs CLI Flow
+
+```
+                    +-----------------+
+                    |  jwesecret App  |
+                    +--------+--------+
+                             |
+               +-------------+-------------+
+               |                           |
+        [CLI Mode]                  [HTTP Server Mode]
+               |                           |
+      +--------v---------+         +-------v--------+
+      |  Flags:          |         |  Endpoints:    |
+      |  --mode encrypt  |         |  /encrypt      |
+      |  --input SECRET  |         |  /decrypt      |
+      |  [--jwt]         |         |  ?jwt=true     |
+      +--------+---------+         +-------+--------+
+               |                           |
+     +---------v----------+     +----------v---------+
+     |  Output to stdout  |     |  Response to client|
+     +--------------------+     +--------------------+
+```
 
 ## 🛠 Usage
 
