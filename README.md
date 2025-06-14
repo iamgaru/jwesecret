@@ -30,8 +30,8 @@ go run jwe_secret_store.go
 Or via Docker:
 
 ```bash
-docker build -t jwe-server .
-docker run -p 8080:8888 jwe-server
+docker build -t jwesecret .
+docker run -p 8080:8888 jwesecret
 ```
 
 ### Encrypt a secret
