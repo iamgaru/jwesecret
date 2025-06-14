@@ -174,6 +174,6 @@ go run jwesecret.go --help
 | Key         | Value                                      |
 |--------------|---------------------------------------------|
 | **Author**   | Nick Conolly                               |
-| **Version**  | 0.0.1                                       |
+| **Version**  | 0.0.2                                      |
 | **GitHub**   | [@iamgaru](https://github.com/iamgaru)     |
 | **License**  | [MIT](LICENSE)                             |
