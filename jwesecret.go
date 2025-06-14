@@ -5,6 +5,8 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"flag"
 	"fmt"
@@ -29,28 +31,99 @@ var rsaPriv *rsa.PrivateKey
 var ecPriv *ecdsa.PrivateKey
 
 func getKeyType() KeyType {
+	keyFlag := flag.String("keytype", "", "Key type to use (ec or rsa)")
+	flag.Parse()
+	if *keyFlag == string(KeyTypeEC) || *keyFlag == string(KeyTypeRSA) {
+		return KeyType(*keyFlag)
+	}
 	if val := os.Getenv("JWE_KEY_TYPE"); val == string(KeyTypeRSA) {
 		return KeyTypeRSA
 	}
 	return KeyTypeEC
 }
 
+func saveRSAPrivateKey(path string, key *rsa.PrivateKey) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	return pem.Encode(f, &pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(key),
+	})
+}
+
+func loadRSAPrivateKey(path string) (*rsa.PrivateKey, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	block, _ := pem.Decode(data)
+	if block == nil || block.Type != "RSA PRIVATE KEY" {
+		return nil, errors.New("invalid RSA key format")
+	}
+	return x509.ParsePKCS1PrivateKey(block.Bytes)
+}
+
+func saveECPrivateKey(path string, key *ecdsa.PrivateKey) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	der, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		return err
+	}
+	return pem.Encode(f, &pem.Block{
+		Type:  "EC PRIVATE KEY",
+		Bytes: der,
+	})
+}
+
+func loadECPrivateKey(path string) (*ecdsa.PrivateKey, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	block, _ := pem.Decode(data)
+	if block == nil || block.Type != "EC PRIVATE KEY" {
+		return nil, errors.New("invalid EC key format")
+	}
+	return x509.ParseECPrivateKey(block.Bytes)
+}
+
 func loadOrGenerateKeysWithType(kt KeyType) error {
 	switch kt {
 	case KeyTypeRSA:
-		key, err := rsa.GenerateKey(rand.Reader, 2048)
+		key, err := loadRSAPrivateKey("rsa_private.pem")
+		if err == nil {
+			rsaPriv = key
+			return nil
+		}
+		key, err = rsa.GenerateKey(rand.Reader, 2048)
 		if err != nil {
 			return err
 		}
 		rsaPriv = key
-		return nil
+		return saveRSAPrivateKey("rsa_private.pem", key)
+
 	case KeyTypeEC:
-		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		key, err := loadECPrivateKey("ec_private.pem")
+		if err == nil {
+			ecPriv = key
+			return nil
+		}
+		key, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		if err != nil {
 			return err
 		}
 		ecPriv = key
-		return nil
+		return saveECPrivateKey("ec_private.pem", key)
+
 	default:
 		return errors.New("unsupported key type")
 	}
@@ -59,6 +132,7 @@ func loadOrGenerateKeysWithType(kt KeyType) error {
 func encryptSecretWithType(secret string, kt KeyType) (string, error) {
 	var pub interface{}
 	var alg jose.KeyAlgorithm
+
 	switch kt {
 	case KeyTypeRSA:
 		pub = rsaPriv.Public()
@@ -67,8 +141,9 @@ func encryptSecretWithType(secret string, kt KeyType) (string, error) {
 		pub = ecPriv.Public()
 		alg = jose.ECDH_ES_A256KW
 	default:
-		return "", errors.New("invalid key type")
+		return "", errors.New("unsupported key type")
 	}
+
 	encrypter, err := jose.NewEncrypter(
 		jose.A256GCM,
 		jose.Recipient{Algorithm: alg, Key: pub},
@@ -96,7 +171,7 @@ func decryptSecretWithType(jwe string, kt KeyType) (string, error) {
 	case KeyTypeEC:
 		plaintext, err = obj.Decrypt(ecPriv)
 	default:
-		return "", errors.New("invalid key type")
+		return "", errors.New("unsupported key type")
 	}
 	if err != nil {
 		return "", err
@@ -109,6 +184,7 @@ func wrapInJWTWithType(payload string, kt KeyType) (string, error) {
 		"data": payload,
 		"exp":  time.Now().Add(1 * time.Hour).Unix(),
 	}
+
 	var token *jwt.Token
 	switch kt {
 	case KeyTypeRSA:
@@ -123,7 +199,7 @@ func wrapInJWTWithType(payload string, kt KeyType) (string, error) {
 }
 
 func unwrapFromJWTWithType(tokenStr string, kt KeyType) (string, error) {
-	parsed, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
+	returnedToken, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
 		switch kt {
 		case KeyTypeRSA:
 			return &rsaPriv.PublicKey, nil
@@ -136,22 +212,27 @@ func unwrapFromJWTWithType(tokenStr string, kt KeyType) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if claims, ok := parsed.Claims.(jwt.MapClaims); ok && parsed.Valid {
-		if data, ok := claims["data"].(string); ok {
-			return data, nil
+	if claims, ok := returnedToken.Claims.(jwt.MapClaims); ok && returnedToken.Valid {
+		if val, ok := claims["data"].(string); ok {
+			return val, nil
 		}
-		return "", errors.New("no data claim found")
+		return "", errors.New("missing 'data' claim")
 	}
-	return "", errors.New("invalid jwt claims")
+	return "", errors.New("invalid JWT token")
 }
 
 func main() {
 	mode := flag.String("mode", "server", "Mode to run: server | encrypt | decrypt")
 	input := flag.String("input", "", "Input string to encrypt or decrypt")
 	jwtWrap := flag.Bool("jwt", false, "Whether to wrap/unwrap result in JWT")
+	keyFlag := flag.String("keytype", "", "Key type to use (ec or rsa)")
 	flag.Parse()
 
-	keyType := getKeyType()
+	keyType := KeyType(*keyFlag)
+	if keyType != KeyTypeEC && keyType != KeyTypeRSA {
+		keyType = getKeyType()
+	}
+
 	if err := loadOrGenerateKeysWithType(keyType); err != nil {
 		log.Fatalf("Key init failed: %v", err)
 	}
