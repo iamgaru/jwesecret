@@ -8,11 +8,8 @@ RUN go mod download
 
 COPY . ./
 
-RUN go build -o /jwe-server
+RUN go build -o /jwesecret
 
 EXPOSE 8888
 
-CMD ["/jwe-server"]
-EXPOSE 8888
-
-CMD ["/jwe-server"]
+CMD ["/jwesecret"]
