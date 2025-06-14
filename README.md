@@ -1,15 +1,12 @@
 # 🔐 jwesecret – Encrypted Secret Store with JWE + JWT in Go
 
-**jwesecret** is a lightweight Go server for storing and retrieving secrets (e.g., WiFi passwords, API keys) using **asymmetric encryption** via [JWE (JSON Web Encryption)](https://datatracker.ietf.org/doc/html/rfc7516). Secrets can optionally be wrapped in a signed **JWT**, allowing for identity-carrying, tamper-proof payloads.
+**jwesecret** is a lightweight Go server and CLI for storing and retrieving secrets (e.g., WiFi passwords, API keys) using **asymmetric encryption** via [JWE (JSON Web Encryption)](https://datatracker.ietf.org/doc/html/rfc7516). Secrets can optionally be wrapped in a signed **JWT**, allowing for identity-carrying, tamper-proof payloads.
 
 - 💂 Secure: RSA-OAEP + AES-GCM encryption
-- 🔏 Optional JWT wrapping (`?jwt=true`) for claim-based token delivery
+- 🔏 Optional JWT wrapping (`?jwt=true` or `--jwt`)
 - 🧪 Includes unit tests for roundtrip encryption and JWT verification
 - 🐳 Dockerized with persistent key support
-
-# 🔐 jwesecret (Go)
-
-This is a proof-of-concept Go server that securely stores and retrieves secrets using **JWE** (JSON Web Encryption) and optionally wraps the encrypted payload in a **JWT** for additional integrity and claim-based access control.
+- 🛠 Dual mode: HTTP server or CLI
 
 ## 🚀 Features
 
@@ -17,6 +14,7 @@ This is a proof-of-concept Go server that securely stores and retrieves secrets 
 - 🔐 JWE encryption (AES-GCM + RSA-OAEP)
 - 🧾 Optional JWT wrapping (`?jwt=true`)
 - 🌐 HTTP server with `/encrypt` and `/decrypt` endpoints
+- 🛠 CLI interface with `--mode encrypt|decrypt`
 - 🐳 Docker support
 
 ## 🛠 Usage
@@ -34,7 +32,7 @@ docker build -t jwesecret .
 docker run -p 8888:8888 jwesecret
 ```
 
-### Encrypt a secret
+### Encrypt a secret via HTTP
 
 ```bash
 curl -X POST http://localhost:8888/encrypt -d 'super-secret'
@@ -46,16 +44,48 @@ With JWT wrapping:
 curl -X POST 'http://localhost:8888/encrypt?jwt=true' -d 'super-secret'
 ```
 
-### Decrypt a secret
+### Decrypt a secret via HTTP
 
 ```bash
 curl -X POST http://localhost:8888/decrypt -d '<JWE>'
 ```
 
-Or with JWT:
+With JWT:
 
 ```bash
-curl -X POST 'http://localhost:8888/decrypt?jwt=true' -d '<JWT>'
+curl -X POST http://localhost:8888/decrypt?jwt=true -d '<JWT>'
+```
+
+### CLI encryption
+
+```bash
+go run jwesecret.go --mode encrypt --input "my secret"
+```
+
+With JWT wrapping:
+
+```bash
+go run jwesecret.go --mode encrypt --input "my secret" --jwt
+```
+
+### CLI decryption
+
+```bash
+go run jwesecret.go --mode decrypt --input "<jwe-or-jwt>" --jwt
+```
+
+### CLI help
+
+```bash
+go run jwesecret.go --help
+
+# Output:
+# -mode string
+#       Mode: serve | encrypt | decrypt (default "serve")
+# -input string
+#       Input to encrypt/decrypt
+# -jwt
+#       Wrap/unwrap input/output as JWT
 ```
 
 ## 📚 Dependencies
@@ -63,13 +93,11 @@ curl -X POST 'http://localhost:8888/decrypt?jwt=true' -d '<JWT>'
 - [go-jose](https://github.com/square/go-jose)
 - [golang-jwt/jwt](https://github.com/golang-jwt/jwt)
 
+## ✍️ Author & Version
 
- ## Author & Version
-
-| Key       | Value          |
-|-----------|----------------|
-| **Author**  | Nick Conolly    |
-| **Version** | 0.0.1           |
-| **GitHub**  | [@iamgaru](https://github.com/iamgaru) |
-| **License** | [MIT](LICENSE)  |
-
+| Key         | Value                                      |
+|--------------|---------------------------------------------|
+| **Author**   | Nick Conolly                               |
+| **Version**  | 0.0.1                                       |
+| **GitHub**   | [@iamgaru](https://github.com/iamgaru)     |
+| **License**  | [MIT](LICENSE)                             |

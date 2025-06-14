@@ -1,3 +1,4 @@
+// jwesecret.go
 package main
 
 import (
@@ -6,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -33,11 +35,10 @@ func loadOrGenerateKeys() error {
 			return fmt.Errorf("failed to parse private key: %w", err)
 		}
 		rsaPrivKey = key
-		rsaPubKey = &rsaPrivKey.PublicKey // ✅ Fix: ensure rsaPubKey is set
+		rsaPubKey = &rsaPrivKey.PublicKey
 		return nil
 	}
 
-	// Generate new keys
 	var err error
 	rsaPrivKey, err = rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -48,123 +49,172 @@ func loadOrGenerateKeys() error {
 	privPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(rsaPrivKey)})
 	pubASN1, _ := x509.MarshalPKIXPublicKey(rsaPubKey)
 	pubPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubASN1})
-
 	_ = os.WriteFile(privKeyPath, privPEM, 0600)
 	_ = os.WriteFile(pubKeyPath, pubPEM, 0644)
 	return nil
 }
 
 func encryptSecret(secret string) (string, error) {
-	encrypter, err := jose.NewEncrypter(jose.A256GCM, jose.Recipient{
+	recipient := jose.Recipient{
 		Algorithm: jose.RSA_OAEP,
 		Key:       rsaPubKey,
-	}, nil)
+	}
+	opts := jose.EncrypterOptions{}
+	encrypter, err := jose.NewEncrypter(jose.A256GCM, recipient, &opts)
 	if err != nil {
 		return "", fmt.Errorf("failed to create encrypter: %w", err)
 	}
 
-	obj, err := encrypter.Encrypt([]byte(secret))
+	jwe, err := encrypter.Encrypt([]byte(secret))
 	if err != nil {
-		return "", fmt.Errorf("failed to encrypt: %w", err)
+		return "", fmt.Errorf("encryption failed: %w", err)
 	}
 
-	return obj.FullSerialize(), nil
+	serialized := jwe.FullSerialize()
+	return serialized, nil
 }
 
-func decryptSecret(serialized string) (string, error) {
-	obj, err := jose.ParseEncrypted(serialized)
+func decryptSecret(jweStr string) (string, error) {
+	jweObj, err := jose.ParseEncrypted(jweStr)
 	if err != nil {
-		return "", fmt.Errorf("failed to parse encrypted string: %w", err)
+		return "", fmt.Errorf("failed to parse JWE: %w", err)
 	}
-	decrypted, err := obj.Decrypt(rsaPrivKey)
+
+	decrypted, err := jweObj.Decrypt(rsaPrivKey)
 	if err != nil {
 		return "", fmt.Errorf("failed to decrypt: %w", err)
 	}
+
 	return string(decrypted), nil
 }
 
-func wrapJWT(claimKey, value string) (string, error) {
-	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
-		claimKey: value,
-		"exp":    time.Now().Add(time.Hour).Unix(),
-	})
-	return tok.SignedString(rsaPrivKey)
+func wrapInJWT(payload string) (string, error) {
+	claims := jwt.MapClaims{
+		"data": payload,
+		"exp":  time.Now().Add(10 * time.Minute).Unix(),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	return token.SignedString(rsaPrivKey)
 }
 
-func unwrapJWT(tokenStr, claimKey string) (string, error) {
-	token, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodRSA); !ok {
-			return nil, errors.New("unexpected signing method")
+func unwrapFromJWT(tokenStr string) (string, error) {
+	token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
 		return rsaPubKey, nil
 	})
-	if err != nil || !token.Valid {
-		return "", errors.New("invalid token")
+	if err != nil {
+		return "", fmt.Errorf("failed to parse JWT: %w", err)
 	}
-	claims, ok := token.Claims.(jwt.MapClaims)
-	if !ok {
-		return "", errors.New("invalid claims")
+
+	if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
+		if data, ok := claims["data"].(string); ok {
+			return data, nil
+		}
+		return "", errors.New("JWT does not contain 'data' field")
 	}
-	val, ok := claims[claimKey].(string)
-	if !ok {
-		return "", errors.New("claim not found")
-	}
-	return val, nil
+
+	return "", errors.New("invalid JWT or claims")
 }
 
 func encryptHandler(w http.ResponseWriter, r *http.Request) {
-	useJWT := r.URL.Query().Get("jwt") == "true"
-	data, err := io.ReadAll(r.Body)
-	if err != nil || len(data) == 0 {
-		http.Error(w, "missing body", http.StatusBadRequest)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "failed to read body", http.StatusBadRequest)
 		return
 	}
-	ciphertext, err := encryptSecret(string(data))
+	defer r.Body.Close()
+
+	wrap := r.URL.Query().Get("jwt") == "true"
+	var resp string
+	if wrap {
+		resp, err = wrapInJWT(string(body))
+	} else {
+		resp, err = encryptSecret(string(body))
+	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if useJWT {
-		ciphertext, err = wrapJWT("enc", ciphertext)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-	}
-	w.Write([]byte(ciphertext))
+	w.Write([]byte(resp))
 }
 
 func decryptHandler(w http.ResponseWriter, r *http.Request) {
-	useJWT := r.URL.Query().Get("jwt") == "true"
-	data, err := io.ReadAll(r.Body)
-	if err != nil || len(data) == 0 {
-		http.Error(w, "missing body", http.StatusBadRequest)
-		return
-	}
-	payload := string(data)
-	if useJWT {
-		payload, err = unwrapJWT(payload, "enc")
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusUnauthorized)
-			return
-		}
-	}
-	plaintext, err := decryptSecret(payload)
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "failed to read body", http.StatusBadRequest)
 		return
 	}
-	w.Write([]byte(plaintext))
+	defer r.Body.Close()
+
+	wrapped := r.URL.Query().Get("jwt") == "true"
+	var resp string
+	if wrapped {
+		resp, err = unwrapFromJWT(string(body))
+	} else {
+		resp, err = decryptSecret(string(body))
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Write([]byte(resp))
 }
 
 func main() {
+	mode := flag.String("mode", "server", "Mode: server | encrypt | decrypt")
+	input := flag.String("input", "", "Input string to encrypt or decrypt")
+	jwtMode := flag.Bool("jwt", false, "Use JWT wrapping/unwrapping")
+	flag.Parse()
+
 	if err := loadOrGenerateKeys(); err != nil {
-		log.Fatalf("failed to init keys: %v", err)
+		log.Fatal("key error:", err)
 	}
 
-	http.HandleFunc("/encrypt", encryptHandler)
-	http.HandleFunc("/decrypt", decryptHandler)
+	switch *mode {
+	case "encrypt":
+		if *input == "" {
+			log.Fatal("missing input for encryption")
+		}
+		ciphertext, err := encryptSecret(*input)
+		if err != nil {
+			log.Fatal("encryption failed:", err)
+		}
+		if *jwtMode {
+			jwtToken, err := wrapInJWT(ciphertext)
+			if err != nil {
+				log.Fatal("JWT wrap failed:", err)
+			}
+			fmt.Println(jwtToken)
+			return
+		}
+		fmt.Println(ciphertext)
+		return
 
-	fmt.Println("Server running at http://localhost:8888")
-	log.Fatal(http.ListenAndServe(":8888", nil))
+	case "decrypt":
+		if *input == "" {
+			log.Fatal("missing input for decryption")
+		}
+		data := *input
+		if *jwtMode {
+			var err error
+			data, err = unwrapFromJWT(data)
+			if err != nil {
+				log.Fatal("JWT unwrap failed:", err)
+			}
+		}
+		plaintext, err := decryptSecret(data)
+		if err != nil {
+			log.Fatal("decryption failed:", err)
+		}
+		fmt.Println(plaintext)
+		return
+
+	default:
+		fmt.Println("Server running at http://localhost:8888")
+		http.HandleFunc("/encrypt", encryptHandler)
+		http.HandleFunc("/decrypt", decryptHandler)
+		log.Fatal(http.ListenAndServe(":8888", nil))
+	}
 }
