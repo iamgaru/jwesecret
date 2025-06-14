@@ -63,3 +63,13 @@ curl -X POST 'http://localhost:8888/decrypt?jwt=true' -d '<JWT>'
 - [go-jose](https://github.com/square/go-jose)
 - [golang-jwt/jwt](https://github.com/golang-jwt/jwt)
 
+
+ ## Author & Version
+
+| Key       | Value          |
+|-----------|----------------|
+| **Author**  | Nick Conolly    |
+| **Version** | 0.0.1           |
+| **GitHub**  | [@iamgaru](https://github.com/iamgaru) |
+| **License** | [MIT](LICENSE)  |
+
