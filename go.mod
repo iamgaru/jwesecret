@@ -1,4 +1,4 @@
-module gamu.io/jwe-secret-store
+module gamu.io/jwesecret
 
 go 1.24.3
 
