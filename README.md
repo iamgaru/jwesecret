@@ -24,14 +24,14 @@ This is a proof-of-concept Go server that securely stores and retrieves secrets 
 ### Start the server
 
 ```bash
-go run jwe_secret_store.go
+go run jwesecret.go
 ```
 
 Or via Docker:
 
 ```bash
 docker build -t jwesecret .
-docker run -p 8080:8888 jwesecret
+docker run -p 8888:8888 jwesecret
 ```
 
 ### Encrypt a secret
